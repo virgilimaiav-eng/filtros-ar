@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Filtros AR — Cámara</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, sans-serif; }
+
+  #app { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+
+  canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+
+  #ui {
+    position: relative; z-index: 10;
+    display: flex; flex-direction: column;
+    justify-content: flex-end; align-items: center;
+    height: 100vh; padding-bottom: env(safe-area-inset-bottom, 16px);
+    pointer-events: none;
+  }
+
+  .filter-bar {
+    pointer-events: all;
+    display: flex; gap: 10px; padding: 12px 16px;
+    background: rgba(0,0,0,0.45); backdrop-filter: blur(12px);
+    border-radius: 24px; margin-bottom: 20px;
+    border: 0.5px solid rgba(255,255,255,0.12);
+  }
+
+  .filter-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 8px 14px; border-radius: 16px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.06);
+    transition: all 0.2s; min-width: 64px;
+    -webkit-user-select: none; user-select: none;
+  }
+  .filter-btn.active { background: rgba(255,255,255,0.22); border-color: rgba(255,255,255,0.5); }
+  .filter-btn span { font-size: 11px; font-weight: 500; color: rgba(255,255,255,0.85); letter-spacing: 0.04em; }
+  .filter-btn .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dot-0 { background: #c8a0ff; }
+  .dot-1 { background: #a0d8ff; }
+  .dot-2 { background: #ffdd80; }
+  .dot-3 { background: #80ffcc; }
+
+  .controls-row {
+    pointer-events: all;
+    display: flex; gap: 12px; padding: 10px 16px;
+    background: rgba(0,0,0,0.35); backdrop-filter: blur(8px);
+    border-radius: 20px; margin-bottom: 12px; align-items: center;
+    border: 0.5px solid rgba(255,255,255,0.10);
+  }
+  .controls-row label { font-size: 11px; color: rgba(255,255,255,0.6); min-width: 64px; }
+  .controls-row input[type=range] { -webkit-appearance: none; width: 110px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.25); outline: none; }
+  .controls-row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; }
+
+  #cam-btn {
+    pointer-events: all;
+    width: 60px; height: 60px; border-radius: 50%;
+    background: rgba(255,255,255,0.15); border: 2px solid rgba(255,255,255,0.5);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; margin-bottom: 24px; font-size: 22px;
+    backdrop-filter: blur(8px); transition: transform 0.15s;
+  }
+  #cam-btn:active { transform: scale(0.93); }
+
+  .filter-name {
+    position: absolute; top: env(safe-area-inset-top, 16px); left: 0; right: 0;
+    text-align: center; z-index: 10; pointer-events: none;
+  }
+  .filter-name h1 { font-size: 16px; font-weight: 600; color: rgba(255,255,255,0.9); letter-spacing: 0.05em; text-shadow: 0 1px 6px rgba(0,0,0,0.6); }
+  .filter-name p  { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 2px; text-shadow: 0 1px 4px rgba(0,0,0,0.6); }
+
+  #start-screen {
+    position: fixed; inset: 0; background: #000; z-index: 100;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+  }
+  #start-screen h2 { color: #fff; font-size: 22px; font-weight: 600; }
+  #start-screen p { color: rgba(255,255,255,0.55); font-size: 14px; text-align: center; max-width: 260px; line-height: 1.5; }
+  #start-btn {
+    padding: 14px 36px; border-radius: 28px; background: #fff; color: #000;
+    font-size: 15px; font-weight: 600; cursor: pointer; border: none; margin-top: 8px;
+  }
+
+  #err { display: none; position: fixed; inset: 0; background: #000; z-index: 200;
+    flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 32px; }
+  #err p { color: #ff6060; text-align: center; font-size: 14px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<div id="err">
+  <p id="err-msg">Error accediendo a la cámara. Asegurate de abrir este archivo en Safari (iOS) o Chrome (Android) y dar permiso de cámara.</p>
+</div>
+
+<div id="start-screen">
+  <h2>Filtros AR</h2>
+  <p>Cuatro filtros que deforman la realidad en tiempo real usando tu cámara.</p>
+  <button id="start-btn">Activar cámara</button>
+</div>
+
+<div id="app">
+  <canvas id="glc"></canvas>
+  <div class="filter-name">
+    <h1 id="fname">Filtro Líquido</h1>
+    <p id="fsub">Realidad en constante cambio</p>
+  </div>
+  <div id="ui">
+    <div class="controls-row">
+      <label>Intensidad</label>
+      <input type="range" id="intensity" min="0" max="2" step="0.05" value="1">
+      <label>Velocidad</label>
+      <input type="range" id="speed" min="0" max="3" step="0.05" value="1">
+    </div>
+    <div class="filter-bar">
+      <div class="filter-btn active" data-i="0"><div class="dot dot-0"></div><span>Líquido</span></div>
+      <div class="filter-btn" data-i="1"><div class="dot dot-1"></div><span>Cristal</span></div>
+      <div class="filter-btn" data-i="2"><div class="dot dot-2"></div><span>Fragmento</span></div>
+      <div class="filter-btn" data-i="3"><div class="dot dot-3"></div><span>Escaneo</span></div>
+    </div>
+    <div id="cam-btn">🔄</div>
+  </div>
+</div>
+
+<script>
+const FILTERS = [
+  { name: "Filtro Líquido",    sub: "Realidad en constante cambio" },
+  { name: "Filtro Cristal",    sub: "Formas fragmentadas y prismáticas" },
+  { name: "Filtro Fragmento",  sub: "Collage de espacio y cuerpo" },
+  { name: "Filtro Escaneo",    sub: "Digitalización en tiempo real" },
+];
+
+const canvas = document.getElementById('glc');
+const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+let video, texture, activeFilter = 0, intensity = 1.0, speedMul = 1.0;
+let facingUser = false;
+let startTime = 0, raf;
+
+// ---- Shaders ----
+const vSrc = `
+attribute vec2 aPos;
+varying vec2 vUv;
+void main(){
+  vUv = aPos * 0.5 + 0.5;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`;
+
+const fSrc = `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D uTex;
+uniform float uTime;
+uniform float uIntensity;
+uniform int uFilter;
+uniform vec2 uRes;
+
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float noise(vec2 p){
+  vec2 i=floor(p); vec2 f=fract(p);
+  float a=hash(i); float b=hash(i+vec2(1,0));
+  float c=hash(i+vec2(0,1)); float d=hash(i+vec2(1,1));
+  vec2 u=f*f*(3.0-2.0*f);
+  return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+}
+float fbm(vec2 p){
+  float v=0.0; float amp=0.5; float freq=1.0;
+  for(int i=0;i<5;i++){v+=amp*noise(p*freq);amp*=0.5;freq*=2.1;}
+  return v;
+}
+
+void main(){
+  vec2 uv = vUv;
+  vec4 cam;
+
+  /* ====== LÍQUIDO ====== */
+  if(uFilter == 0){
+    float t = uTime * 0.5;
+    float warp  = fbm(uv * 2.5 + t * 0.35) * uIntensity;
+    float warp2 = fbm(uv * 1.6 - t * 0.28 + warp) * uIntensity;
+    vec2 disp = vec2(
+      fbm(uv * 3.0 + warp2 + vec2(t*0.18, 0.0)) - 0.5,
+      fbm(uv * 3.0 + warp2 + vec2(0.0, t*0.15)) - 0.5
+    ) * 0.30 * uIntensity;
+    cam = texture2D(uTex, clamp(uv + disp, 0.001, 0.999));
+    float shine = pow(max(0.0, fbm(uv*8.0+t*0.7)-0.62)/0.38, 2.5);
+    vec3 iridescence = vec3(
+      0.5 + 0.5*sin(uTime*0.8 + fbm(uv*4.0)*6.28),
+      0.5 + 0.5*sin(uTime*0.6 + fbm(uv*3.5+1.0)*6.28 + 2.09),
+      0.5 + 0.5*sin(uTime*1.0 + fbm(uv*3.0+2.0)*6.28 + 4.19)
+    );
+    cam.rgb = mix(cam.rgb, iridescence, shine * 0.55 * uIntensity);
+    cam.rgb = mix(cam.rgb, vec3(1.0), shine * 0.18 * uIntensity);
+  }
+
+  /* ====== CRISTAL ====== */
+  else if(uFilter == 1){
+    float t = uTime * 0.2;
+    float scale = 6.0 + uIntensity * 2.5;
+    vec2 gv = uv * scale;
+    vec2 gi = floor(gv);
+    float cellAngle = hash(gi + floor(t*0.4)) * 6.2831;
+    float cellDist  = hash(gi + vec2(1.3, 7.9) + floor(t*0.3)) * 0.18 * uIntensity;
+    vec2 refracted  = uv + vec2(cos(cellAngle), sin(cellAngle)) * cellDist;
+    cam = texture2D(uTex, clamp(refracted, 0.001, 0.999));
+    vec2 gf = fract(gv);
+    float edge = min(min(gf.x, 1.0-gf.x), min(gf.y, 1.0-gf.y));
+    float edgeLine = 1.0 - smoothstep(0.0, 0.07, edge);
+    float brightness = hash(gi + floor(t*0.5));
+    vec3 prismColor = vec3(
+      0.5+0.5*sin(brightness*6.28 + 0.0),
+      0.5+0.5*sin(brightness*6.28 + 2.09),
+      0.5+0.5*sin(brightness*6.28 + 4.19)
+    );
+    cam.rgb = mix(cam.rgb, prismColor, edgeLine * 0.7 * uIntensity);
+    cam.rgb = mix(cam.rgb, vec3(1.0), edgeLine * 0.4 * uIntensity);
+    float sparkle = step(0.97, hash(gi + floor(t*4.0)));
+    cam.rgb = mix(cam.rgb, vec3(1.0), sparkle * uIntensity * 0.9);
+  }
+
+  /* ====== FRAGMENTO ====== */
+  else if(uFilter == 2){
+    float t = uTime * 0.5;
+    float gt = floor(t * 1.8);
+    float stripH = 0.06 + hash(vec2(gt, 2.0)) * 0.10;
+    float stripId = floor(uv.y / stripH);
+    float doGlitch = step(0.60, hash(vec2(stripId, gt)));
+    float shiftX = (hash(vec2(stripId, gt+0.3)) - 0.5) * 0.28 * uIntensity * doGlitch;
+    vec2 suv = vec2(fract(uv.x + shiftX), uv.y);
+    cam = texture2D(uTex, clamp(suv, 0.001, 0.999));
+    float bx = floor(suv.x * (4.0 + uIntensity * 2.0));
+    float by = floor(suv.y * (4.0 + uIntensity * 2.0));
+    float bval = hash(vec2(bx, by) + floor(t * 0.8));
+    vec3 tints[5];
+    tints[0] = vec3(1.0,  0.85, 0.35);
+    tints[1] = vec3(0.75, 0.28, 0.92);
+    tints[2] = vec3(0.28, 0.82, 0.58);
+    tints[3] = vec3(0.92, 0.28, 0.42);
+    tints[4] = vec3(0.15, 0.18, 0.24);
+    float sel = hash(vec2(bx + floor(t*0.4), by));
+    vec3 tint = tints[0];
+    if(sel > 0.80) tint = tints[4];
+    else if(sel > 0.60) tint = tints[3];
+    else if(sel > 0.40) tint = tints[2];
+    else if(sel > 0.20) tint = tints[1];
+    cam.rgb = mix(cam.rgb, cam.rgb * tint * 1.3, 0.50 * uIntensity);
+    float blank = step(0.88, hash(vec2(bx*0.5+floor(t*0.3), by*0.5)));
+    cam.rgb = mix(cam.rgb, vec3(1.0), blank * 0.55 * uIntensity);
+    float ink = step(0.93, hash(vec2(suv.x*25.0, suv.y*25.0) + floor(t*4.0)));
+    cam.rgb = mix(cam.rgb, vec3(0.06, 0.04, 0.08), ink * uIntensity * 0.8);
+    float scan = step(0.5, mod(uv.y * 70.0, 1.0)) * 0.07;
+    cam.rgb -= scan;
+  }
+
+  /* ====== ESCANEO ====== */
+  else if(uFilter == 3){
+    float t = uTime * 0.7;
+    float stripH = 0.022;
+    float stripId = floor(uv.y / stripH);
+    float gt = floor(t * 7.0);
+    float doShift = step(0.70, hash(vec2(stripId*0.4, gt)));
+    float shiftX = (hash(vec2(stripId, gt+0.5)) - 0.5) * 0.10 * uIntensity * doShift;
+    vec2 suv = vec2(fract(uv.x + shiftX), uv.y);
+    cam = texture2D(uTex, clamp(suv, 0.001, 0.999));
+    float scanPos = mod(uv.y + t * 0.22, 1.0);
+    float beam = smoothstep(0.0, 0.035, scanPos) * (1.0 - smoothstep(0.035, 0.09, scanPos));
+    vec3 tealBeam = vec3(0.15, 1.0, 0.85);
+    cam.rgb += tealBeam * beam * 0.45 * uIntensity;
+    cam.rgb = mix(cam.rgb, cam.rgb * vec3(0.55, 1.2, 1.05), uIntensity * 0.4);
+    float scanline = (1.0 - step(0.5, mod(uv.y * 100.0, 1.0))) * 0.10;
+    cam.rgb -= scanline;
+    float dataLine = step(0.996, hash(vec2(uv.y*200.0, floor(t*4.0))));
+    cam.rgb = mix(cam.rgb, vec3(0.7, 1.0, 0.9), dataLine * uIntensity);
+    float pixNoise = hash(vec2(floor(suv.x*60.0), floor(suv.y*60.0)) + floor(t*10.0));
+    cam.rgb += tealBeam * step(0.88, pixNoise) * 0.3 * uIntensity * (0.5 + 0.5*sin(uTime*3.0));
+  }
+
+  float vignette = 1.0 - smoothstep(0.38, 1.15, length((uv - 0.5)*1.4));
+  cam.rgb *= mix(1.0, vignette, 0.35);
+  gl_FragColor = cam;
+}`;
+
+function compileShader(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.warn(gl.getShaderInfoLog(s));
+  return s;
+}
+
+let prog, uTime, uIntensityU, uFilter, uRes;
+
+function initGL(){
+  prog = gl.createProgram();
+  gl.attachShader(prog, compileShader(gl.VERTEX_SHADER, vSrc));
+  gl.attachShader(prog, compileShader(gl.FRAGMENT_SHADER, fSrc));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'aPos');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+  texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.uniform1i(gl.getUniformLocation(prog, 'uTex'), 0);
+
+  uTime       = gl.getUniformLocation(prog, 'uTime');
+  uIntensityU = gl.getUniformLocation(prog, 'uIntensity');
+  uFilter     = gl.getUniformLocation(prog, 'uFilter');
+  uRes        = gl.getUniformLocation(prog, 'uRes');
+}
+
+function resize(){
+  canvas.width  = window.innerWidth  * Math.min(window.devicePixelRatio, 2);
+  canvas.height = window.innerHeight * Math.min(window.devicePixelRatio, 2);
+  canvas.style.width  = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+
+function frame(now){
+  raf = requestAnimationFrame(frame);
+  if(!video || video.readyState < 2) return;
+  resize();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+  const t = (now - startTime) * 0.001 * speedMul;
+  gl.uniform1f(uTime, t);
+  gl.uniform1f(uIntensityU, intensity);
+  gl.uniform1i(uFilter, activeFilter);
+  gl.uniform2f(uRes, canvas.width, canvas.height);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+async function startCamera(front){
+  if(video){ video.srcObject && video.srcObject.getTracks().forEach(t=>t.stop()); }
+  video = document.createElement('video');
+  video.setAttribute('playsinline', '');
+  video.setAttribute('autoplay', '');
+  video.muted = true;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: front ? 'user' : 'environment', width:{ideal:1280}, height:{ideal:720} },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    document.getElementById('start-screen').style.display = 'none';
+    document.getElementById('err').style.display = 'none';
+    if(!prog) initGL();
+    startTime = performance.now();
+    if(raf) cancelAnimationFrame(raf);
+    requestAnimationFrame(frame);
+  } catch(e){
+    const err = document.getElementById('err');
+    err.style.display = 'flex';
+    document.getElementById('err-msg').textContent =
+      'Error: ' + e.message + '. Abrí este archivo en Safari (iOS) o Chrome (Android) y da permiso de cámara.';
+  }
+}
+
+// UI events
+document.getElementById('start-btn').addEventListener('click', () => startCamera(false));
+
+document.getElementById('cam-btn').addEventListener('click', () => {
+  facingUser = !facingUser;
+  startCamera(facingUser);
+});
+
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = parseInt(btn.dataset.i);
+    document.getElementById('fname').textContent = FILTERS[activeFilter].name;
+    document.getElementById('fsub').textContent  = FILTERS[activeFilter].sub;
+  });
+});
+
+document.getElementById('intensity').addEventListener('input', e => { intensity = parseFloat(e.target.value); });
+document.getElementById('speed').addEventListener('input', e => { speedMul = parseFloat(e.target.value); });
+
+window.addEventListener('resize', resize);
+</script>
+</body>
+</html>
